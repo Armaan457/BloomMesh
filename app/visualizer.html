@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BloomMesh - Distributed Cluster Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background-color: #090a0f;
+      background-image: radial-gradient(circle at 50% 0%, rgba(225, 29, 72, 0.08) 0%, rgba(15, 17, 26, 0.4) 35%, #090a0f 80%);
+      background-attachment: fixed;
+    }
+    .ring-canvas {
+      filter: drop-shadow(0 0 16px rgba(244, 63, 94, 0.2));
+    }
+    #logContainer::-webkit-scrollbar {
+      width: 6px;
+    }
+    #logContainer::-webkit-scrollbar-track {
+      background: #090a0f;
+      border-radius: 4px;
+    }
+    #logContainer::-webkit-scrollbar-thumb {
+      background: #272a38;
+      border-radius: 4px;
+    }
+    #logContainer::-webkit-scrollbar-thumb:hover {
+      background: #3c4156;
+    }
+  </style>
+</head>
+<body class="text-zinc-100 min-h-screen font-sans antialiased p-3 sm:p-5 md:p-8 selection:bg-rose-900 selection:text-white">
+  <div class="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-800 pb-4 sm:pb-5 gap-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div id="connectionDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse shrink-0"></div>
+          <h1 class="text-xl sm:text-2xl font-black tracking-tight bg-gradient-to-r from-zinc-100 via-zinc-200 to-rose-400 bg-clip-text text-transparent flex items-center gap-2.5">
+            <span>BloomMesh</span>
+            <span class="text-xs font-mono font-semibold px-2 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-700 uppercase tracking-wider hidden sm:inline">
+              Cluster Visualizer
+            </span>
+          </h1>
+          <span id="connectionBadge" class="text-xs px-2.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-700/80 font-mono shadow-[0_0_8px_rgba(16,185,129,0.2)] shrink-0">
+            Connecting WebSocket...
+          </span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button onclick="addRandomNode()" class="px-3.5 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-lg border border-zinc-700 shadow-sm transition">
+          + Add Node
+        </button>
+        <button onclick="syncAllNodes()" class="px-3.5 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-lg border border-zinc-700 shadow-sm transition flex items-center gap-1.5">
+          <span>↺</span> Anti-Entropy Sync
+        </button>
+      </div>
+    </header>
+
+    <!-- Controls Bar -->
+    <div class="bg-zinc-900/90 border border-zinc-700/80 rounded-2xl p-4 sm:p-5 shadow-xl backdrop-blur-sm">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+        <div class="md:col-span-6 lg:col-span-5 space-y-1.5">
+          <label class="text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+            <span class="text-rose-400">●</span> Item / Key
+          </label>
+          <input id="keyInput" type="text" value="user:101" placeholder="e.g. user:42" 
+                 class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-rose-500 transition shadow-inner">
+        </div>
+
+        <div class="md:col-span-3 lg:col-span-3 space-y-1.5">
+          <label class="text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono flex items-center gap-1.5">
+            <span class="text-amber-400">●</span> Replication (N)
+          </label>
+          <select id="repSelect" class="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:border-amber-500 transition shadow-inner">
+            <option value="1">1 (Single node)</option>
+            <option value="2" selected>2 (Primary+1)</option>
+            <option value="3">3 (All) </option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3 lg:col-span-4 flex flex-col sm:flex-row gap-2 sm:gap-3">
+          <button onclick="performAdd()" class="flex-1 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:from-red-500 hover:to-rose-500 active:scale-[0.98] text-white font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-red-950/60 border border-red-500/50 transition flex items-center justify-center gap-1.5 text-sm">
+            <span>+</span> Add (Write)
+          </button>
+          <button onclick="performContains()" class="flex-1 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 active:scale-[0.98] text-zinc-950 font-bold py-2.5 px-4 rounded-xl shadow-lg shadow-amber-950/60 border border-amber-400/60 transition flex items-center justify-center gap-1.5 text-sm">
+            Check (Query)
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Ring & Node Cards -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Left Column: Hash Ring Visualization -->
+      <div class="lg:col-span-5 self-start lg:sticky lg:top-6 bg-zinc-900/90 border border-zinc-700/80 rounded-2xl p-4 sm:p-5 flex flex-col items-center shadow-xl backdrop-blur-sm">
+        <div class="w-full flex justify-between items-center mb-2">
+          <h2 class="text-xs sm:text-sm font-bold text-zinc-200 uppercase tracking-wider font-mono flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_6px_#f43f5e]"></span>
+            Live Hash Ring (360°)
+          </h2>
+          <span id="ringKeyInfo" class="text-xs text-amber-400 font-mono truncate max-w-[160px]"></span>
+        </div>
+        
+        <div class="relative w-full max-w-[320px] aspect-square flex items-center justify-center my-2">
+          <canvas id="ringCanvas" width="340" height="340" class="ring-canvas w-full h-full"></canvas>
+          <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-4">
+            <span class="text-xs text-rose-400/90 uppercase tracking-widest font-mono font-bold">Live Cluster</span>
+            <span id="centerStatus" class="text-base sm:text-lg font-black text-white mt-0.5 font-mono">3 Active Nodes</span>
+            <span id="centerVnodes" class="text-xs text-zinc-400 font-mono">Loading vnodes...</span>
+          </div>
+        </div>
+
+        <div class="w-full grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-zinc-800 text-center text-xs">
+          <div>
+            <div class="text-zinc-400 text-xs font-mono uppercase tracking-wider">Active Nodes</div>
+            <div id="statActiveNodes" class="font-black text-white text-base sm:text-lg font-mono">0</div>
+          </div>
+          <div>
+            <div class="text-zinc-400 text-xs font-mono uppercase tracking-wider">Avg Set Bits</div>
+            <div id="statAvgFill" class="font-black text-amber-400 text-base sm:text-lg font-mono">0</div>
+          </div>
+          <div>
+            <div class="text-zinc-400 text-xs font-mono uppercase tracking-wider">Hash Functions</div>
+            <div class="font-black text-cyan-400 text-base sm:text-lg font-mono">k = 7</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Node Cluster Cards -->
+      <div class="lg:col-span-7 flex flex-col gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-4">
+          <h2 class="text-xs sm:text-sm font-bold text-zinc-200 uppercase tracking-wider font-mono flex items-center gap-2">
+            <span class="text-rose-400">⚡</span> Live TCP Bloom Nodes
+          </h2>
+          <span class="text-xs text-zinc-400 font-mono">Click button to toggle node socket</span>
+        </div>
+
+        <div id="nodesContainer" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- Dynamically populated from Python WebSocket state -->
+        </div>
+
+        <!-- Operation Result Card -->
+        <div id="operationResultCard" class="hidden bg-zinc-900/90 border border-zinc-700/80 rounded-2xl p-4 shadow-xl">
+          <div class="flex items-center justify-between gap-2">
+            <span id="resultBadge" class="px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.25)]">OK</span>
+            <span id="resultLatency" class="text-xs text-zinc-400 font-mono shrink-0">0.0ms</span>
+          </div>
+          <div class="mt-3 text-xs bg-zinc-950 p-3 rounded-xl border border-zinc-800 font-mono space-y-1.5">
+            <div><span class="text-zinc-400">Key:</span> <span id="opKey" class="text-white font-bold break-all"></span></div>
+            <div><span class="text-zinc-400">Target Replicas:</span> <span id="opReplicas" class="text-amber-300 font-semibold break-all"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom: Live Event Log -->
+    <div class="bg-zinc-900/90 border border-zinc-700/80 rounded-2xl p-4 shadow-xl backdrop-blur-sm">
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="text-xs font-bold text-zinc-200 uppercase tracking-wider font-mono flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse"></span>
+          Live Socket Protocol Stream
+        </h3>
+        <button onclick="clearLogs()" class="text-xs text-zinc-400 hover:text-zinc-200 font-mono transition">Clear</button>
+      </div>
+      <div id="logContainer" class="bg-zinc-950 rounded-xl p-3 min-h-[3.5rem] max-h-48 overflow-y-auto font-mono text-xs space-y-1 text-zinc-300 border border-zinc-800">
+        <div class="text-zinc-500 italic">Waiting for cluster events...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Vibrant metal palette: Crimson Rose, Molten Amber, Electric Purple, Toxic Emerald, Cyan Lightning, Flame Orange
+    const NODE_PALETTE = ['#f43f5e', '#fbbf24', '#a855f7', '#10b981', '#06b6d4', '#f97316'];
+
+    let ws = null;
+    let clusterNodes = [];
+    let vnodeRing = [];
+
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host || '127.0.0.1:8000';
+      ws = new WebSocket(`${protocol}//${host}/ws`);
+
+      ws.onopen = () => {
+        document.getElementById('connectionDot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse';
+        document.getElementById('connectionBadge').className = 'text-xs px-2.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-700/80 font-mono shadow-[0_0_8px_rgba(16,185,129,0.2)]';
+        document.getElementById('connectionBadge').textContent = 'Cluster Connected';
+        log('WebSocket connected to Python FastAPI backend.', 'info');
+      };
+
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'state') {
+          clusterNodes = msg.nodes;
+          vnodeRing = msg.vnodes;
+          renderNodes();
+          drawRing();
+          updateStats();
+        } else if (msg.type === 'op_result') {
+          handleOpResult(msg);
+        } else if (msg.type === 'log') {
+          log(msg.message, 'info');
+        }
+      };
+
+      ws.onclose = () => {
+        document.getElementById('connectionDot').className = 'w-2.5 h-2.5 rounded-full bg-red-400';
+        document.getElementById('connectionBadge').className = 'text-xs px-2.5 py-0.5 rounded bg-zinc-800 text-red-400 border border-red-800/80 font-mono';
+        document.getElementById('connectionBadge').textContent = 'Disconnected (Retrying...)';
+        log('WebSocket connection closed. Retrying in 2s...', 'err');
+        setTimeout(connectWebSocket, 2000);
+      };
+    }
+
+    function drawRing() {
+      const canvas = document.getElementById('ringCanvas');
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const radius = 125;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Distinct visible titanium ring track
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = '#272a38';
+      ctx.lineWidth = 10;
+      ctx.stroke();
+
+      // Virtual node sparks on the ring with subtle glow
+      vnodeRing.forEach(vn => {
+        const angle = vn.hash * Math.PI * 2 - Math.PI / 2;
+        const x = cx + Math.cos(angle) * radius;
+        const y = cy + Math.sin(angle) * radius;
+
+        const nodeIdx = clusterNodes.findIndex(n => n.id === vn.nodeId);
+        const color = nodeIdx >= 0 ? NODE_PALETTE[nodeIdx % NODE_PALETTE.length] : '#64748b';
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 4;
+        ctx.fill();
+        ctx.restore();
+      });
+    }
+
+    function renderNodes() {
+      const container = document.getElementById('nodesContainer');
+      container.innerHTML = '';
+
+      if (!clusterNodes || clusterNodes.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-8 px-4 rounded-2xl border border-dashed border-zinc-700 text-center text-zinc-400 text-xs font-mono">
+            No active nodes. Click "+ Add Node" to spin up a TCP Bloom node.
+          </div>
+        `;
+        return;
+      }
+
+      clusterNodes.forEach((node, idx) => {
+        const color = NODE_PALETTE[idx % NODE_PALETTE.length];
+        const card = document.createElement('div');
+        card.className = `p-4 rounded-2xl border transition-all ${
+          node.online 
+            ? 'bg-zinc-900/90 border-zinc-700/80 hover:border-zinc-500 shadow-lg' 
+            : 'bg-zinc-950/60 border-zinc-800/80 opacity-60'
+        }`;
+
+        const fillWidth = Math.max(node.fill_pct > 0 ? 1 : 0, Math.min(100, node.fill_pct));
+        const keysHtml = node.keys && node.keys.length > 0
+          ? node.keys.slice(-4).map(k => `<span class="px-2 py-0.5 text-[11px] rounded-md bg-zinc-800/90 text-zinc-100 font-mono border border-zinc-700 truncate max-w-[120px] font-medium shadow-sm">${k}</span>`).join('')
+          : '<span class="text-zinc-500 italic text-[11px] font-mono">No keys stored</span>';
+
+        card.innerHTML = `
+          <div class="flex items-center justify-between gap-2 mb-3">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="w-3.5 h-3.5 rounded-full shrink-0" style="background-color: ${color}; box-shadow: 0 0 8px ${color}"></span>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="font-bold text-sm text-white truncate">${node.name}</span>
+                  <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${node.online ? 'bg-emerald-950/90 text-emerald-400 border border-emerald-600/80 shadow-[0_0_6px_rgba(16,185,129,0.3)]' : 'bg-zinc-800 text-zinc-400 border border-zinc-700'}">
+                    ${node.online ? 'ONLINE' : 'OFFLINE'}
+                  </span>
+                </div>
+                <span class="text-xs font-mono text-zinc-400 block truncate">${node.host}</span>
+              </div>
+            </div>
+            <button onclick="toggleNode('${node.id}')" class="shrink-0 px-2.5 py-1 text-xs rounded-lg font-semibold transition ${
+              node.online 
+                ? 'bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700/80 shadow-sm' 
+                : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/80 shadow-sm'
+            }">
+              ${node.online ? 'Kill Server' : 'Start Server'}
+            </button>
+          </div>
+
+          <!-- Saturation Progress -->
+          <div class="space-y-1.5 mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-800">
+            <div class="flex justify-between text-xs font-mono">
+              <span class="text-zinc-300 text-xs font-medium">Bit Saturation</span>
+              <span class="text-rose-400 font-bold text-xs">${node.set_bits} / ${(node.m || 0).toLocaleString()} bits (${node.fill_pct}%)</span>
+            </div>
+            <div class="w-full bg-zinc-800 rounded-full h-2 overflow-hidden">
+              <div class="bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-400 h-2 rounded-full transition-all duration-300 shadow-[0_0_8px_rgba(244,63,94,0.35)]" style="width: ${fillWidth}%"></div>
+            </div>
+          </div>
+
+          <!-- Metrics Grid -->
+          <div class="grid grid-cols-3 gap-1.5 text-center text-xs mb-3">
+            <div class="bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wider font-mono font-medium">Memory</div>
+              <div class="font-mono text-zinc-100 text-xs font-bold mt-0.5">${((node.memory_bytes || 0) / 1024).toFixed(1)} KB</div>
+            </div>
+            <div class="bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wider font-mono font-medium">Est. FPR</div>
+              <div class="font-mono text-amber-400 text-xs font-bold mt-0.5">${node.est_fpr}%</div>
+            </div>
+            <div class="bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+              <div class="text-zinc-400 text-[10px] uppercase tracking-wider font-mono font-medium">Capacity</div>
+              <div class="font-mono text-cyan-400 text-xs font-bold mt-0.5">${node.capacity}</div>
+            </div>
+          </div>
+
+          <!-- Stored Keys -->
+          <div class="pt-2 border-t border-zinc-800">
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+              <span class="text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">Routed Keys (${(node.keys || []).length})</span>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              ${keysHtml}
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    function updateStats() {
+      const active = clusterNodes.filter(n => n.online).length;
+      document.getElementById('statActiveNodes').textContent = active;
+      document.getElementById('centerStatus').textContent = `${active} Active Node${active !== 1 ? 's' : ''}`;
+      document.getElementById('centerVnodes').textContent = `${vnodeRing.length} Virtual Nodes`;
+
+      const totalBits = clusterNodes.filter(n => n.online).reduce((sum, n) => sum + n.set_bits, 0);
+      document.getElementById('statAvgFill').textContent = active > 0 ? (totalBits / active).toFixed(0) : '0';
+    }
+
+    function handleOpResult(msg) {
+      const card = document.getElementById('operationResultCard');
+      card.classList.remove('hidden');
+
+      const isAdd = msg.action === 'add';
+      const targetStr = (msg.targets && msg.targets.length) ? msg.targets.join(', ') : 'None (all nodes offline)';
+      const badge = document.getElementById('resultBadge');
+      if (isAdd) {
+        badge.textContent = msg.success ? 'ACKNOWLEDGED' : 'FAILED';
+        badge.className = msg.success 
+          ? 'px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-600/80 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+          : 'px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-red-950/90 text-red-300 border border-red-700 shrink-0';
+        log(`TCP ADD '${msg.key}' -> Targets: [${targetStr}] -> Success: ${msg.success} (${msg.latency_ms}ms)`, msg.success ? 'add' : 'err');
+      } else {
+        badge.textContent = msg.found ? 'TRUE (EXISTS)' : 'FALSE (NOT FOUND)';
+        badge.className = msg.found
+          ? 'px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-600/80 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+          : 'px-2.5 py-0.5 rounded text-xs font-mono font-bold bg-zinc-800 text-zinc-300 border border-zinc-700 shrink-0';
+        log(`TCP CONTAINS '${msg.key}' -> Targets: [${targetStr}] -> Result: ${msg.found} (${msg.latency_ms}ms)`, 'query');
+      }
+
+      document.getElementById('opKey').textContent = msg.key;
+      document.getElementById('opReplicas').textContent = targetStr;
+      document.getElementById('resultLatency').textContent = `${msg.latency_ms}ms`;
+      document.getElementById('ringKeyInfo').textContent = `Key: ${msg.key}`;
+    }
+
+    function log(msg, type = 'info') {
+      const container = document.getElementById('logContainer');
+      const placeholder = container.querySelector('.italic');
+      if (placeholder) {
+        container.innerHTML = '';
+      }
+      const entry = document.createElement('div');
+      const time = new Date().toLocaleTimeString();
+      let colorClass = 'text-zinc-300';
+      if (type === 'add') colorClass = 'text-rose-400 font-semibold';
+      if (type === 'query') colorClass = 'text-amber-300 font-semibold';
+      if (type === 'err') colorClass = 'text-red-400 font-bold';
+
+      entry.className = `${colorClass} break-all`;
+      entry.innerHTML = `<span class="text-zinc-500">[${time}]</span> ${msg}`;
+      container.appendChild(entry);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function setKey(k) {
+      document.getElementById('keyInput').value = k;
+    }
+
+    function performAdd() {
+      const key = document.getElementById('keyInput').value.trim();
+      const consistency = parseInt(document.getElementById('repSelect').value, 10);
+      if (!key || !ws) return;
+      ws.send(JSON.stringify({ action: 'add', key, consistency }));
+    }
+
+    function performContains() {
+      const key = document.getElementById('keyInput').value.trim();
+      const consistency = parseInt(document.getElementById('repSelect').value, 10);
+      if (!key || !ws) return;
+      ws.send(JSON.stringify({ action: 'contains', key, consistency }));
+    }
+
+    function toggleNode(nodeId) {
+      if (!ws) return;
+      ws.send(JSON.stringify({ action: 'toggle_node', node_id: nodeId }));
+    }
+
+    function addRandomNode() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ action: 'add_node' }));
+    }
+
+    function syncAllNodes() {
+      if (!ws) return;
+      ws.send(JSON.stringify({ action: 'sync' }));
+    }
+
+    function clearLogs() {
+      document.getElementById('logContainer').innerHTML = '<div class="text-zinc-500 italic">Logs cleared. Waiting for cluster events...</div>';
+    }
+
+    connectWebSocket();
+  </script>
+</body>
+</html>

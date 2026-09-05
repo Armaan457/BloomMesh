@@ -2,6 +2,7 @@ import bisect
 import hashlib
 from typing import Optional
 
+
 class HashRing:
     def __init__(self, nodes: Optional[list[str]] = None, vnodes: int = 100):
         self.vnodes = vnodes
@@ -57,5 +58,4 @@ class HashRing:
                     break
 
         return result
-
 

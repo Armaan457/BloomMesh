@@ -57,4 +57,4 @@ class BloomNode:
         if self.server:
             self.server.close()
             await self.server.wait_closed()
-
+            self.server = None
