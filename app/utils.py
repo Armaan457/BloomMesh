@@ -5,11 +5,27 @@ from src.bloom_filter import BloomFilter
 from src.tcp_node import BloomNode
 from src.tcp_client import BloomClient
 
-PORTS = [9001, 9002, 9003]
+PORTS = [9001, 9002, 9003, 9004]
 nodes: dict[str, BloomNode] = {}
 node_keys: dict[str, list[str]] = {}
 client = BloomClient(nodes=[], replicas=2)
 connections: list[WebSocket] = []
+
+def resolve_consistency(data: dict[str, Any], total_nodes: int) -> tuple[int, int, str]:
+    choice = str(data.get("choice") or data.get("level") or data.get("consistency") or "quorum").lower()
+    if choice in ("single", "1"):
+        return 1, 1, "SINGLE (1/1)"
+    elif choice in ("primary_plus_one", "primary+1", "2"):
+        return 2, 2, "PRIMARY+1 (2/2)"
+    elif choice in ("quorum", "3"):
+        return 3, 2, "QUORUM (2/3)"
+    elif choice in ("all", "4"):
+        count = max(1, total_nodes)
+        return count, count, f"ALL ({count}/{count})"
+    else:
+        c = int(data.get("consistency") or 2)
+        r = int(data.get("replicas") or c)
+        return r, c, f"CUSTOM ({c}/{r})"
 
 
 def get_state() -> dict[str, Any]:
@@ -60,13 +76,13 @@ async def handle_action(data: dict[str, Any]) -> None:
 
     if action == "add":
         key = data.get("key", "").strip()
-        consistency = int(data.get("consistency", 2))
         if not key:
             return
 
+        replicas, consistency, mode_label = resolve_consistency(data, len(nodes))
         t0 = time.perf_counter()
-        targets = client.ring.get_nodes(key, count=consistency)
-        success = await client.add(key, consistency=consistency, replicas=consistency)
+        targets = client.ring.get_nodes(key, count=replicas)
+        success = await client.add(key, consistency=consistency, replicas=replicas)
         latency = round((time.perf_counter() - t0) * 1000, 2)
 
         if success:
@@ -80,19 +96,20 @@ async def handle_action(data: dict[str, Any]) -> None:
             "key": key,
             "success": success,
             "targets": targets,
+            "mode": mode_label,
             "latency_ms": latency,
         })
         await broadcast(get_state())
 
     elif action == "contains":
         key = data.get("key", "").strip()
-        consistency = int(data.get("consistency", 1))
         if not key:
             return
 
+        replicas, consistency, mode_label = resolve_consistency(data, len(nodes))
         t0 = time.perf_counter()
-        targets = client.ring.get_nodes(key, count=consistency)
-        found = await client.contains(key, consistency=consistency, replicas=consistency)
+        targets = client.ring.get_nodes(key, count=replicas)
+        found = await client.contains(key, consistency=consistency, replicas=replicas)
         latency = round((time.perf_counter() - t0) * 1000, 2)
 
         await broadcast({
@@ -101,6 +118,7 @@ async def handle_action(data: dict[str, Any]) -> None:
             "key": key,
             "found": found,
             "targets": targets,
+            "mode": mode_label,
             "latency_ms": latency,
         })
 
@@ -110,14 +128,12 @@ async def handle_action(data: dict[str, Any]) -> None:
             node = nodes[node_id]
             if node.server:
                 await node.stop()
-                client.ring.remove_node(node_id)
             else:
                 port = int(node_id.split(":")[1])
                 new_node = BloomNode(host="127.0.0.1", port=port, capacity=1000, error_rate=0.01)
                 new_node.bloom = node.bloom
                 await new_node.start()
                 nodes[node_id] = new_node
-                client.ring.add_node(node_id)
 
             await broadcast(get_state())
 
