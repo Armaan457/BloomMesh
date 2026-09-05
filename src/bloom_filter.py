@@ -1,5 +1,5 @@
-import hashlib
 import math
+import mmh3
 
 class BloomFilter:
     def __init__(self, capacity: int = 1000, error_rate: float = 0.01):
@@ -10,11 +10,9 @@ class BloomFilter:
         self.bit_array = bytearray((self.m + 7) // 8)
 
     def hashes(self, item: str) -> list[int]:
-        raw = item.encode("utf-8")
-        digest = hashlib.sha256(raw).digest()
-        h1 = int.from_bytes(digest[:8], "big")
-        h2 = int.from_bytes(digest[8:16], "big") or 1
-        return [(h1 + i * h2) % self.m for i in range(self.k)]
+        h1, h2 = mmh3.hash64(item, signed=False)
+        step = h2 if h2 != 0 else 1
+        return [(h1 + i * step) % self.m for i in range(self.k)]
 
     def add(self, item: str) -> None:
         for bit in self.hashes(item):

@@ -1,7 +1,6 @@
 import asyncio
 from .hash_ring import HashRing
 
-
 class BloomClient:
     def __init__(self, nodes: list[str], replicas: int = 1):
         self.replicas = replicas

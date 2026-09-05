@@ -1,7 +1,6 @@
 import bisect
-import hashlib
 from typing import Optional
-
+import mmh3
 
 class HashRing:
     def __init__(self, nodes: Optional[list[str]] = None, vnodes: int = 100):
@@ -15,8 +14,7 @@ class HashRing:
                 self.add_node(node)
 
     def hash(self, key: str) -> int:
-        digest = hashlib.md5(key.encode("utf-8")).digest()
-        return int.from_bytes(digest[:4], "big")
+        return mmh3.hash(key, signed=False)
 
     def add_node(self, node: str) -> None:
         if node in self.nodes:
