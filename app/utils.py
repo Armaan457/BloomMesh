@@ -12,19 +12,29 @@ client = BloomClient(nodes=[], replicas=2)
 connections: list[WebSocket] = []
 
 def resolve_consistency(data: dict[str, Any], total_nodes: int) -> tuple[int, int, str]:
+    total = max(1, total_nodes)
     choice = str(data.get("choice") or data.get("level") or data.get("consistency") or "quorum").lower()
+
     if choice in ("single", "1"):
         return 1, 1, "SINGLE (1/1)"
     elif choice in ("primary_plus_one", "primary+1", "2"):
-        return 2, 2, "PRIMARY+1 (2/2)"
+        r = min(2, total)
+        return r, r, f"PRIMARY+1 ({r}/{r})"
     elif choice in ("quorum", "3"):
-        return 3, 2, "QUORUM (2/3)"
+        r = min(3, total)
+        w = (r // 2) + 1
+        return r, w, f"QUORUM ({w}/{r})"
     elif choice in ("all", "4"):
-        count = max(1, total_nodes)
-        return count, count, f"ALL ({count}/{count})"
+        return total, total, f"ALL ({total}/{total})"
+    elif choice == "custom":
+        r = max(1, min(int(data.get("replicas") or 3), total))
+        c = max(1, min(int(data.get("consistency") or 1), r))
+        return r, c, f"CUSTOM ({c}/{r})"
     else:
         c = int(data.get("consistency") or 2)
         r = int(data.get("replicas") or c)
+        r = max(1, min(r, total))
+        c = max(1, min(c, r))
         return r, c, f"CUSTOM ({c}/{r})"
 
 
@@ -87,8 +97,9 @@ async def handle_action(data: dict[str, Any]) -> None:
 
         if success:
             for target in targets:
-                if target in node_keys and key not in node_keys[target]:
-                    node_keys[target].append(key)
+                if target in nodes and nodes[target].server is not None:
+                    if target in node_keys and key not in node_keys[target]:
+                        node_keys[target].append(key)
 
         await broadcast({
             "type": "op_result",
@@ -147,6 +158,19 @@ async def handle_action(data: dict[str, Any]) -> None:
         client.ring.add_node(addr)
         await broadcast(get_state())
 
+    elif action == "remove_node":
+        node_id = data.get("node_id")
+        if not node_id and len(nodes) > 1:
+            node_id = list(nodes.keys())[-1]
+
+        if node_id and node_id in nodes and len(nodes) > 1:
+            node = nodes.pop(node_id)
+            if node.server:
+                await node.stop()
+            node_keys.pop(node_id, None)
+            client.ring.remove_node(node_id)
+            await broadcast(get_state())
+
     elif action == "sync":
         active = [addr for addr, node in nodes.items() if node.server]
         merged_bf = BloomFilter(capacity=1000, error_rate=0.01)
@@ -160,5 +184,9 @@ async def handle_action(data: dict[str, Any]) -> None:
         serialized_hex = merged_bf.serialize().hex()
         for addr in active:
             await client.send(addr, f"MERGE {serialized_hex}")
+
+        all_active_keys = sorted(list({k for addr in active for k in node_keys.get(addr, [])}))
+        for addr in active:
+            node_keys[addr] = list(all_active_keys)
 
         await broadcast(get_state())

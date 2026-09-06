@@ -25,6 +25,11 @@ class TestServer(unittest.TestCase):
         self.assertEqual(resolve_consistency({"choice": "primary_plus_one"}, 4), (2, 2, "PRIMARY+1 (2/2)"))
         self.assertEqual(resolve_consistency({"choice": "quorum"}, 4), (3, 2, "QUORUM (2/3)"))
         self.assertEqual(resolve_consistency({"choice": "all"}, 4), (4, 4, "ALL (4/4)"))
+        self.assertEqual(resolve_consistency({"choice": "custom", "replicas": 3, "consistency": 1}, 4), (3, 1, "CUSTOM (1/3)"))
+        # Dynamic adaptation when nodes are reduced
+        self.assertEqual(resolve_consistency({"choice": "quorum"}, 2), (2, 2, "QUORUM (2/2)"))
+        self.assertEqual(resolve_consistency({"choice": "all"}, 2), (2, 2, "ALL (2/2)"))
+        self.assertEqual(resolve_consistency({"choice": "quorum"}, 1), (1, 1, "QUORUM (1/1)"))
 
     def test_websocket_initial_state(self):
         with self.client.websocket_connect("/ws") as ws:
@@ -77,3 +82,15 @@ class TestServer(unittest.TestCase):
             ws.send_text(json.dumps({"action": "sync"}))
             sync_state = ws.receive_json()
             self.assertEqual(sync_state.get("type"), "state")
+
+    def test_websocket_add_and_remove_node(self):
+        with self.client.websocket_connect("/ws") as ws:
+            _ = ws.receive_json()
+
+            ws.send_text(json.dumps({"action": "add_node"}))
+            state_after_add = ws.receive_json()
+            initial_count = len(state_after_add["nodes"])
+
+            ws.send_text(json.dumps({"action": "remove_node"}))
+            state_after_remove = ws.receive_json()
+            self.assertEqual(len(state_after_remove["nodes"]), initial_count - 1)

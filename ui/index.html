@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BloomMesh - Distributed Cluster Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="text-zinc-100 min-h-screen font-sans antialiased p-3 sm:p-5 md:p-8 selection:bg-zinc-800 selection:text-zinc-200">
+  <div class="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+
+    <!-- Header -->
+    <header class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-zinc-800/80 pb-4 sm:pb-5 gap-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div id="connectionDot" class="w-2 h-2 rounded-full bg-emerald-400 ring-4 ring-emerald-500/20 shrink-0"></div>
+          <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+            <span>BloomMesh</span>
+            <span class="text-[11px] font-mono font-medium px-2 py-0.5 rounded-md bg-zinc-800/80 text-zinc-400 border border-zinc-700/60 uppercase tracking-wider hidden sm:inline">
+              Cluster Visualizer
+            </span>
+          </h1>
+          <span id="connectionBadge" class="text-xs px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-medium shrink-0">
+            Connecting WebSocket...
+          </span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button onclick="addRandomNode()" class="px-3 py-1.5 text-xs font-medium bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 hover:text-white rounded-lg border border-zinc-700/80 transition-colors shadow-sm">
+          + Add Node
+        </button>
+        <button onclick="removeLastNode()" class="px-3 py-1.5 text-xs font-medium bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 hover:text-white rounded-lg border border-zinc-700/80 transition-colors shadow-sm">
+          - Remove Node
+        </button>
+        <button onclick="syncAllNodes()" class="px-3 py-1.5 text-xs font-medium bg-zinc-800/90 hover:bg-zinc-700 text-zinc-200 hover:text-white rounded-lg border border-zinc-700/80 transition-colors shadow-sm flex items-center gap-1.5">
+          <span>↺</span> Anti-Entropy Sync
+        </button>
+      </div>
+    </header>
+
+    <!-- Controls Bar -->
+    <div class="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 sm:p-5 shadow-sm">
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+        <div class="md:col-span-6 lg:col-span-5 space-y-1.5">
+          <label class="text-xs font-medium text-zinc-400 uppercase tracking-wider font-mono">
+            Item / Key
+          </label>
+          <input id="keyInput" type="text" value="user:101" placeholder="e.g. user:42" 
+                 class="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-rose-500/70 rounded-lg px-3.5 py-2 text-sm text-zinc-100 placeholder-zinc-500 font-mono focus:outline-none transition">
+        </div>
+
+        <div class="md:col-span-3 lg:col-span-3 space-y-1.5">
+          <label class="text-xs font-medium text-zinc-400 uppercase tracking-wider font-mono">
+            Consistency Level
+          </label>
+          <select id="repSelect" onchange="toggleCustomControls()" class="w-full bg-zinc-950 border border-zinc-800 hover:border-zinc-700 focus:border-amber-500/70 rounded-lg px-3 py-2 text-sm text-zinc-100 font-mono focus:outline-none transition">
+            <option value="single">1 (Single node: N=1, W=1)</option>
+            <option value="primary_plus_one">2 (Primary+1: N=2, W=2)</option>
+            <option value="quorum" selected>3 (Quorum: N=3, W=2)</option>
+            <option value="all">4 (ALL: N=Total, W=Total)</option>
+            <option value="custom">Custom (N & W)...</option>
+          </select>
+        </div>
+
+        <div class="md:col-span-3 lg:col-span-4 flex flex-col sm:flex-row gap-2 sm:gap-2.5">
+          <button onclick="performAdd()" class="flex-1 bg-rose-600 hover:bg-rose-500 active:scale-[0.98] text-white font-medium py-2 px-3.5 rounded-lg border border-rose-500/40 shadow-sm transition-all flex items-center justify-center gap-1.5 text-sm">
+            <span>+</span> Add (Write)
+          </button>
+          <button onclick="performContains()" class="flex-1 bg-zinc-800 hover:bg-zinc-700 active:scale-[0.98] text-zinc-100 hover:text-white font-medium py-2 px-3.5 rounded-lg border border-zinc-700 shadow-sm transition-all flex items-center justify-center gap-1.5 text-sm">
+            Check (Query)
+          </button>
+        </div>
+
+        <!-- Custom N & W inputs (toggled when Custom option is chosen) -->
+        <div id="customControls" class="hidden md:col-span-12 pt-3 border-t border-zinc-800/80 flex flex-wrap items-center gap-4 text-xs font-mono">
+          <div class="flex items-center gap-2">
+            <span class="text-zinc-400">Replicas (N):</span>
+            <input id="customN" type="number" min="1" max="10" value="3" oninput="onCustomNChange()"
+                   class="w-16 bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1 text-center text-amber-300 font-bold focus:outline-none focus:border-amber-500">
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-zinc-400">Required ACKs (W):</span>
+            <input id="customW" type="number" min="1" max="10" value="1" 
+                   class="w-16 bg-zinc-950 border border-zinc-700 rounded px-2.5 py-1 text-center text-rose-300 font-bold focus:outline-none focus:border-rose-500">
+          </div>
+          <span id="customHelper" class="text-zinc-500 text-[11px]">(e.g. N=3, W=1 writes to 3 replicas but confirms as soon as 1 node ACKs)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Ring & Node Cards -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+      <!-- Left Column: Hash Ring Visualization -->
+      <div class="lg:col-span-5 self-start lg:sticky lg:top-6 bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 sm:p-5 flex flex-col items-center shadow-sm">
+        <div class="w-full flex justify-between items-center mb-2">
+          <h2 class="text-xs sm:text-sm font-semibold text-zinc-300 uppercase tracking-wider font-mono">
+            Live Hash Ring (360°)
+          </h2>
+          <span id="ringKeyInfo" class="text-xs text-zinc-400 font-mono truncate max-w-[160px]"></span>
+        </div>
+        
+        <div class="relative w-full max-w-[300px] aspect-square flex items-center justify-center my-2">
+          <canvas id="ringCanvas" width="340" height="340" class="w-full h-full"></canvas>
+          <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center px-4">
+            <span class="text-[11px] text-zinc-400 uppercase tracking-wider font-mono font-medium">Cluster Ring</span>
+            <span id="centerStatus" class="text-base sm:text-lg font-bold text-zinc-100 mt-0.5 font-mono">4 Active Nodes</span>
+            <span id="centerVnodes" class="text-xs text-zinc-500 font-mono">Loading vnodes...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Node Cluster Cards -->
+      <div class="lg:col-span-7 flex flex-col gap-4">
+        <!-- Operation Result Card -->
+        <div id="operationResultCard" class="hidden bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 shadow-sm">
+          <div class="flex items-center justify-between gap-2">
+            <span id="resultBadge" class="px-2 py-0.5 rounded text-xs font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">OK</span>
+            <span id="resultLatency" class="text-xs text-zinc-500 font-mono shrink-0">0.0ms</span>
+          </div>
+          <div class="mt-3 text-xs bg-zinc-950/80 p-3 rounded-lg border border-zinc-800/80 font-mono space-y-1.5">
+            <div><span class="text-zinc-500">Key:</span> <span id="opKey" class="text-zinc-100 font-semibold break-all"></span></div>
+            <div><span class="text-zinc-500">Consistency:</span> <span id="opMode" class="text-rose-400 font-medium"></span></div>
+            <div><span class="text-zinc-500">Target Replicas:</span> <span id="opReplicas" class="text-zinc-300 font-medium break-all"></span></div>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-4">
+          <h2 class="text-xs sm:text-sm font-semibold text-zinc-300 uppercase tracking-wider font-mono">
+            Live TCP Bloom Nodes
+          </h2>
+          <span class="text-xs text-zinc-500 font-mono">Click button to toggle node socket</span>
+        </div>
+
+        <div id="nodesContainer" class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <!-- Dynamically populated from Python WebSocket state -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom: Live Event Log -->
+    <div class="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4 shadow-sm">
+      <div class="flex justify-between items-center mb-2">
+        <h3 class="text-xs font-semibold text-zinc-300 uppercase tracking-wider font-mono">
+          Live Socket Protocol Stream
+        </h3>
+        <button onclick="clearLogs()" class="text-xs text-zinc-500 hover:text-zinc-300 font-mono transition">Clear</button>
+      </div>
+      <div id="logContainer" class="bg-zinc-950/90 rounded-lg p-3 min-h-[3.5rem] max-h-48 overflow-y-auto font-mono text-xs space-y-1 text-zinc-300 border border-zinc-800/80">
+        <div class="text-zinc-600 italic">Waiting for cluster events...</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
