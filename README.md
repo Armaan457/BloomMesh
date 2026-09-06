@@ -19,21 +19,18 @@ BloomMesh enables high-throughput membership checks, configurable fault toleranc
 ## How It Works
 
 ```mermaid
-flowchart TD
-    Client["Web Visualizer"] -->|"Writes & Queries"| Ring["Consistent Hash Ring"]
+flowchart LR
+    Client["Web Visualizer"] --> Ring[" Consistent Hash Ring"]
+    Ring -->|"Replicas"| Cluster
 
-    subgraph Cluster["Distributed Storage Mesh (TCP)"]
+    subgraph Cluster["Nodes (TCP)"]
         direction LR
-        N1["Node 1 (9001)<br/>Bloom Filter"]
-        N2["Node 2 (9002)<br/>Bloom Filter"]
-        N3["Node 3 (9003)<br/>Bloom Filter"]
-        N4["Node 4 (9004)<br/>Bloom Filter"]
+        N1["Node 1"]
+        Dots["..."]
+        NM["Node M"]
     end
 
-    Ring -->|"Replicas N"| Cluster
-
-    Sync["Anti-Entropy Sync Engine"]
-    Cluster <-->|"Keyless Vector Gossip"| Sync
+    Cluster <-->|"Keyless Vector Gossip"| Sync["Anti-Entropy Sync Engine"]
 ```
 
 ---
